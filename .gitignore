@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+
+# Project data & models (large / user-specific — never commit)
+/data/*
+!/data/.gitkeep
+/models/*
+!/models/.gitkeep
+/index/*
+!/index/.gitkeep
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
