@@ -18,8 +18,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from fastapi import FastAPI, Request, UploadFile
+from fastapi import FastAPI, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
 from ondevice_rag import config
 from ondevice_rag.embeddings import Embedder
@@ -31,20 +32,29 @@ WEB_DIR = config.ROOT / "web"
 
 app = FastAPI(title="On-Device RAG")
 
+# Serve the vendored Markdown + math renderer (kept local so the app stays offline).
+(WEB_DIR / "vendor").mkdir(parents=True, exist_ok=True)
+app.mount("/vendor", StaticFiles(directory=str(WEB_DIR / "vendor")), name="vendor")
+
+import threading
+
 _pipeline: RagPipeline | None = None
+_pipeline_lock = threading.Lock()
 
 
 def get_pipeline() -> RagPipeline:
     global _pipeline
-    if _pipeline is None:
-        _pipeline = RagPipeline()
-    return _pipeline
+    with _pipeline_lock:  # avoid two concurrent requests each loading the model
+        if _pipeline is None:
+            _pipeline = RagPipeline()
+        return _pipeline
 
 
 def reset_pipeline() -> None:
     """Drop the cached pipeline so the next query reloads the fresh index."""
     global _pipeline
-    _pipeline = None
+    with _pipeline_lock:
+        _pipeline = None
 
 
 @app.get("/")
@@ -52,13 +62,51 @@ def index() -> FileResponse:
     return FileResponse(WEB_DIR / "index.html")
 
 
+@app.get("/api/models")
+def api_models() -> JSONResponse:
+    from ondevice_rag import models as models_mod
+
+    return JSONResponse(models_mod.list_status())
+
+
+@app.post("/api/model")
+def api_set_model(id: str) -> JSONResponse:
+    from ondevice_rag import models as models_mod
+
+    m = models_mod.by_id(id)
+    if not m:
+        return JSONResponse({"error": "unknown model"}, status_code=400)
+    if not models_mod.is_downloaded(m):
+        return JSONResponse({"error": "model not downloaded"}, status_code=400)
+    models_mod.set_selected(id)
+    reset_pipeline()  # next question loads the newly selected model
+    return JSONResponse({"ok": True, "current": id})
+
+
+@app.post("/api/model/download")
+def api_download_model(id: str) -> JSONResponse:
+    from ondevice_rag import models as models_mod
+
+    m = models_mod.by_id(id)
+    if not m:
+        return JSONResponse({"error": "unknown model"}, status_code=400)
+    try:
+        models_mod.download(m)
+    except Exception as exc:  # noqa: BLE001 - surface download errors to the UI
+        return JSONResponse({"error": str(exc)}, status_code=500)
+    return JSONResponse({"ok": True, "downloaded": True})
+
+
 @app.get("/api/status")
 def status() -> JSONResponse:
     import platform as _pf
 
+    from ondevice_rag import models as models_mod
+
     docs = [p.name for p in config.DATA_DIR.rglob("*") if p.suffix.lower() in {".pdf", ".txt", ".md"}]
     store = VectorStore.load()
     backend = config.detect_backend()
+    current_model = models_mod.selected()
 
     # A friendly accelerator label + whether this run is actually on the NPU.
     accel_labels = {
@@ -75,6 +123,8 @@ def status() -> JSONResponse:
             "platform": f"{_pf.system()} {_pf.machine()}",
             "documents": docs,
             "chunks_indexed": len(store),
+            "model": current_model.label,
+            "model_id": current_model.id,
         }
     )
 
@@ -138,11 +188,24 @@ def delete_document(name: str) -> JSONResponse:
 
 
 @app.get("/api/ask")
-def ask(q: str, request: Request) -> StreamingResponse:
+def ask(q: str, request: Request, sources: list[str] | None = Query(default=None)) -> StreamingResponse:
+    from ondevice_rag.pipeline import detect_mentioned_sources
+
+    allowed = set(sources) if sources else None  # from the document checkboxes
+
+    # If the question names a document, scope to it (within any checkbox selection).
+    all_docs = [
+        p.name for p in config.DATA_DIR.rglob("*")
+        if p.suffix.lower() in {".pdf", ".txt", ".md"} and p.is_file()
+    ]
+    mentioned = detect_mentioned_sources(q, all_docs)
+    if mentioned:
+        allowed = mentioned if allowed is None else (allowed & mentioned or mentioned)
+
     def event_stream():
         try:
             rag = get_pipeline()
-            hits, token_stream = rag.stream_answer(q)
+            hits, token_stream = rag.stream_answer(q, sources=allowed)
             sources = [
                 {"source": h.chunk.source, "chunk_index": h.chunk.chunk_index, "score": round(h.score, 3)}
                 for h in hits

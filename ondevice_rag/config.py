@@ -21,12 +21,16 @@ MODELS_DIR = ROOT / "models"    # downloaded ONNX models
 INDEX_DIR = ROOT / "index"      # persisted vector index
 
 EMBED_MODEL_DIR = MODELS_DIR / "all-MiniLM-L6-v2"  # embedding model + tokenizer
-LLM_MODEL_DIR = MODELS_DIR / "llm"                 # onnxruntime-genai model dir
+LLM_MODEL_DIR = MODELS_DIR / "llm"                 # onnxruntime-genai model dir (NPU path)
+# Small GGUF model for fast CPU generation on memory-limited machines (llama.cpp).
+# Preferred on Mac/CPU dev; the ONNX-GenAI dir above is the NPU/Snapdragon path.
+GGUF_MODEL_PATH = MODELS_DIR / "Llama-3.2-1B-Instruct-Q4_K_M.gguf"
 
 # --- retrieval knobs ------------------------------------------------------
 CHUNK_CHARS = 900          # target characters per chunk
 CHUNK_OVERLAP = 150        # overlap between consecutive chunks
-TOP_K = 4                  # chunks retrieved per question
+TOP_K = 8                  # chunks retrieved per question (more docs represented)
+MAX_PER_SOURCE = 2         # cap chunks per document so one PDF can't dominate
 EMBED_MAX_TOKENS = 256     # truncate long chunks for the embedder
 
 # --- backend selection ----------------------------------------------------

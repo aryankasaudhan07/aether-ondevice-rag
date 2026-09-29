@@ -3,9 +3,10 @@
   "configurations": [
     {
       "name": "web",
-      "runtimeExecutable": "uv",
+      "runtimeExecutable": "/Users/aryank/.local/bin/uv",
       "runtimeArgs": ["run", "uvicorn", "ondevice_rag.server:app", "--port", "8000"],
-      "port": 8000
+      "port": 8000,
+      "autoPort": false
     }
   ]
 }

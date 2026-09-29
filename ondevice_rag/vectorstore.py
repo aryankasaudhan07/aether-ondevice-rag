@@ -37,14 +37,52 @@ class VectorStore:
             vectors if self._vectors is None else np.vstack([self._vectors, vectors])
         )
 
-    def search(self, query_vec: np.ndarray, top_k: int = config.TOP_K) -> list[Hit]:
+    def search(
+        self,
+        query_vec: np.ndarray,
+        top_k: int = config.TOP_K,
+        max_per_source: int | None = config.MAX_PER_SOURCE,
+        allowed_sources: set[str] | None = None,
+    ) -> list[Hit]:
+        """Return the top_k most similar chunks across the searched documents.
+
+        The cosine score is computed against every chunk, so the whole library is
+        searched. `allowed_sources`, when given, restricts results to those document
+        names (the per-question document filter). When max_per_source is set,
+        results are spread across documents (at most max_per_source chunks per file)
+        so a single PDF can't monopolize the answer.
+        """
         if self._vectors is None or not self._chunks:
             return []
         scores = self._vectors @ query_vec  # cosine (vectors are normalized)
-        k = min(top_k, len(self._chunks))
-        top_idx = np.argpartition(-scores, k - 1)[:k]
-        top_idx = top_idx[np.argsort(-scores[top_idx])]
-        return [Hit(chunk=self._chunks[i], score=float(scores[i])) for i in top_idx]
+        order = np.argsort(-scores)         # every chunk, best first
+
+        def allowed(i: int) -> bool:
+            return allowed_sources is None or self._chunks[i].source in allowed_sources
+
+        if not max_per_source:
+            chosen = [int(i) for i in order if allowed(i)][:top_k]
+            return [Hit(chunk=self._chunks[i], score=float(scores[i])) for i in chosen]
+
+        # Diversity pass: take best chunks while capping per document.
+        per_source: dict[str, int] = {}
+        chosen: list[int] = []
+        overflow: list[int] = []
+        for i in order:
+            if not allowed(i):
+                continue
+            src = self._chunks[i].source
+            if per_source.get(src, 0) < max_per_source:
+                chosen.append(int(i))
+                per_source[src] = per_source.get(src, 0) + 1
+                if len(chosen) >= top_k:
+                    break
+            else:
+                overflow.append(int(i))
+        # If diversity left us short (few documents), backfill with next-best.
+        if len(chosen) < top_k:
+            chosen.extend(overflow[: top_k - len(chosen)])
+        return [Hit(chunk=self._chunks[i], score=float(scores[i])) for i in chosen]
 
     def __len__(self) -> int:
         return len(self._chunks)

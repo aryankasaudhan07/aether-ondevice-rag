@@ -16,8 +16,13 @@ from ondevice_rag import config
 
 EMBED_REPO = "Xenova/all-MiniLM-L6-v2"  # ships onnx/model.onnx + tokenizer.json
 
-# Phi-3.5-mini instruct, ONNX for onnxruntime-genai. The CPU int4 variant runs on
-# your Mac now; a QNN/NPU variant swaps in on the Snapdragon (same code).
+# Default LLM: a small GGUF (llama.cpp) — fast and memory-light on CPU, so it runs
+# well even on 8 GB machines. ~0.8 GB.
+GGUF_REPO = "bartowski/Llama-3.2-1B-Instruct-GGUF"
+GGUF_FILE = "Llama-3.2-1B-Instruct-Q4_K_M.gguf"
+
+# Optional ONNX-GenAI LLM (Phi-3.5-mini) for the Snapdragon NPU path — larger
+# (~2.7 GB) and needs more RAM. Fetch with: download_models.py llm-onnx
 LLM_REPO = "microsoft/Phi-3.5-mini-instruct-onnx"
 LLM_VARIANT = "cpu_and_mobile/cpu-int4-awq-block-128-acc-level-4"
 
@@ -40,7 +45,14 @@ def download_embedder() -> None:
 
 
 def download_llm() -> None:
-    print(f"LLM: {LLM_REPO} ({LLM_VARIANT}) — this is the ~2 GB download")
+    """Default LLM: small GGUF for fast, low-memory CPU generation (llama.cpp)."""
+    print(f"LLM (GGUF): {GGUF_REPO}/{GGUF_FILE} — ~0.8 GB")
+    _fetch(GGUF_REPO, GGUF_FILE, config.GGUF_MODEL_PATH)
+
+
+def download_llm_onnx() -> None:
+    """Optional: larger ONNX-GenAI model for the Snapdragon NPU path (~2.7 GB)."""
+    print(f"LLM (ONNX-GenAI): {LLM_REPO} ({LLM_VARIANT}) — ~2.7 GB")
     dest = config.LLM_MODEL_DIR
     if (dest / "genai_config.json").exists():
         print(f"  = {dest.relative_to(config.ROOT)} (already present)")
@@ -52,7 +64,6 @@ def download_llm() -> None:
         allow_patterns=[f"{LLM_VARIANT}/*"],
         local_dir=str(staging),
     )
-    # Find the folder that actually holds genai_config.json and flatten it.
     cfg = next(staging.rglob("genai_config.json"))
     src = cfg.parent
     dest.mkdir(parents=True, exist_ok=True)
@@ -60,7 +71,7 @@ def download_llm() -> None:
         if f.is_file():
             shutil.copy(f, dest / f.name)
     shutil.rmtree(staging, ignore_errors=True)
-    print(f"  + LLM ready in {dest.relative_to(config.ROOT)}")
+    print(f"  + ONNX-GenAI LLM ready in {dest.relative_to(config.ROOT)}")
 
 
 if __name__ == "__main__":
@@ -71,4 +82,6 @@ if __name__ == "__main__":
         download_embedder()
     if which in {"all", "llm"}:
         download_llm()
+    if which == "llm-onnx":
+        download_llm_onnx()
     print("\nDone.")
