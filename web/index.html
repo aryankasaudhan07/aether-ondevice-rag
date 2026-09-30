@@ -400,6 +400,8 @@ async function refreshStatus(){
     const npu = $('npuLine');
     if (s.on_npu){ npu.className = 'npu-line ready'; $('npuBadge').textContent = 'NPU ✓'; $('npuTxt').textContent = 'Hexagon NPU active'; }
     else { npu.className = 'npu-line pending'; $('npuBadge').textContent = 'NPU'; $('npuTxt').textContent = 'Ready — activates on Snapdragon'; }
+    // On the NPU, the ONNX model is the right choice — never show the CPU warning.
+    if (s.on_npu){ const mn = $('modelNote'); if (mn){ mn.textContent = 'Pick what fits your machine. Bigger = better answers but needs more RAM.'; mn.style.color = ''; } }
     const dl = $('docList');
     dl.innerHTML = s.documents.length
       ? s.documents.map(d => `<div class="doc">
